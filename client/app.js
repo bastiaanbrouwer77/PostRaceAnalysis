@@ -5,11 +5,10 @@
 class App {
     constructor() {
         this.container = document.getElementById('app');
-        this.apiBase = window.REACT_APP_API_BASE || window.location.origin;
+        this.apiBase = window.REACT_APP_API_BASE || '/api';
         this.events = [];
         this.selectedEvent = null;
         this.uploads = [];
-        this.searchQuery = '';
         this.statusMessage = '';
         this.uploadStatus = '';
         this.init();
@@ -21,14 +20,14 @@ class App {
     }
 
     async refreshEvents() {
-        const query = encodeURIComponent(this.searchQuery || '');
-        const url = `${this.apiBase}/api/events${query ? `?query=${query}` : ''}`;
+        const url = `${this.apiBase}/events`;
         try {
             const response = await fetch(url);
             this.events = await response.json();
+            this.events.sort((a, b) => b.date.localeCompare(a.date));
         } catch (error) {
             console.error('Could not load events', error);
-            this.statusMessage = 'Unable to load races at this time.';
+            this.statusMessage = `Unable to load races at this time. (${error.message})`;
         }
     }
 
@@ -39,7 +38,7 @@ class App {
         }
 
         try {
-            const response = await fetch(`${this.apiBase}/api/events/${eventId}/uploads`);
+            const response = await fetch(`${this.apiBase}/events/${eventId}/uploads`);
             this.uploads = await response.json();
         } catch (error) {
             console.error('Could not load uploads', error);
@@ -59,7 +58,7 @@ class App {
         }
 
         try {
-            const response = await fetch(`${this.apiBase}/api/events`, {
+            const response = await fetch(`${this.apiBase}/events`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, date }),
@@ -72,7 +71,6 @@ class App {
 
             const created = await response.json();
             this.statusMessage = `Created race "${created.name}."`;
-            this.searchQuery = '';
             this.selectedEvent = created;
             await this.refreshEvents();
             await this.fetchUploads(created.id);
@@ -108,7 +106,7 @@ class App {
         formData.append('media_type', mediaType);
 
         try {
-            const response = await fetch(`${this.apiBase}/api/events/${this.selectedEvent.id}/uploads`, {
+            const response = await fetch(`${this.apiBase}/events/${this.selectedEvent.id}/uploads`, {
                 method: 'POST',
                 body: formData,
             });
@@ -141,22 +139,12 @@ class App {
             return;
         }
 
-        const eventCards = this.events
+        const eventOptions = this.events
             .map((item) => {
                 const isSelected = this.selectedEvent && this.selectedEvent.id === item.id;
-                return `
-                    <li class="event-item ${isSelected ? 'selected' : ''}">
-                        <button type="button" class="event-select" data-event-id="${item.id}">
-                            ${item.name}
-                        </button>
-                        <div class="event-meta">
-                            <strong>Date:</strong> ${item.date}<br>
-                            <small>Created: ${new Date(item.created_at).toLocaleString()}</small>
-                        </div>
-                    </li>
-                `;
+                return `<option value="${item.id}" ${isSelected ? 'selected' : ''}>${item.date} — ${item.name}</option>`;
             })
-            .join('') || '<li>No races found.</li>';
+            .join('') || '<option value="">No races found</option>';
 
         const uploadRows = this.uploads
             .map((upload) => `
@@ -181,10 +169,12 @@ class App {
                 </div>
 
                 <div class="panel-card">
-                    <h2>Search races</h2>
-                    <label for="search-query">Search by name</label>
-                    <input id="search-query" type="search" value="${this.searchQuery}" placeholder="Search races" />
-                    <ul class="event-list">${eventCards}</ul>
+                    <h2>Select race</h2>
+                    <label for="event-select">Choose a race</label>
+                    <select id="event-select">
+                        <option value="">Select a race</option>
+                        ${eventOptions}
+                    </select>
                 </div>
 
                 <div class="panel-card detail-card">
@@ -214,20 +204,21 @@ class App {
         `;
 
         this.container.querySelector('#event-form').addEventListener('submit', (evt) => this.createEvent(evt));
-        this.container.querySelector('#search-query').addEventListener('input', async (evt) => {
-            this.searchQuery = evt.target.value;
-            await this.refreshEvents();
-            this.render();
-        });
+
+        const eventSelect = this.container.querySelector('#event-select');
+        if (eventSelect) {
+            eventSelect.addEventListener('change', async (evt) => {
+                const eventId = Number(evt.target.value);
+                if (eventId) {
+                    await this.selectEvent(eventId);
+                }
+            });
+        }
 
         const uploadForm = this.container.querySelector('#upload-form');
         if (uploadForm) {
             uploadForm.addEventListener('submit', (evt) => this.uploadFile(evt));
         }
-
-        this.container.querySelectorAll('[data-event-id]').forEach((button) => {
-            button.addEventListener('click', async () => await this.selectEvent(Number(button.dataset.eventId)));
-        });
     }
 }
 
