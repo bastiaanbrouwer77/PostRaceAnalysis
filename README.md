@@ -1,26 +1,36 @@
-# PostRaceAnalysis — Njord-like MVP
+# PostRaceAnalysis
 
-This repository contains an MVP for a post-race analysis player: create events, upload videos/photos and GPS (GPX/FIT), link GPS to boats, and view a dual-pane player (video + map with boat tracks).
+Race analysis application with Python backend and web frontend.
 
-Quickstart (local):
-- Backend (Flask): server runs on port 5000
-  - cd server_py && python -m venv venv && venv\Scripts\activate && pip install -r requirements.txt
-  - python app.py
-- Client (dev): cd client && npm install && npm run dev
+## Getting Started
 
-Docker (recommended):
-- Build and run both services with docker-compose: docker-compose up --build
+### Prerequisites
+- Python 3.8+
+- Node.js (for client development)
+- Docker (optional)
 
-Render deploy:
-- Render will auto-detect services from render.yaml. Connect this repository in your Render dashboard and create two services: postrace-api and postrace-web, or let Render create them from render.yaml.
+### Installation
 
-Files of interest:
-- server_py/app.py — Flask API handling events, boats, uploads and GPX parsing
-- client/ — Vite React client and Dockerfile
-- docker-compose.yml — local dev stack
-- render.yaml — Render service definitions
+```bash
+pip install -r requirements.txt
+python server.py
+```
 
-Notes:
-- This is an MVP scaffold. For production: add persistent DB (Postgres), S3 storage, authentication, background workers for media processing and HLS transcoding.
+Visit `http://localhost:5000` in your browser.
 
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+### Docker
+
+```bash
+docker-compose up
+```
+
+## Project Structure
+
+- `server.py` - Flask/FastAPI backend
+- `client/` - Frontend HTML/JavaScript
+- `docker-compose.yml` - Docker configuration
+- `render.yaml` - Render deployment config
+
+## License
+
+MIT
