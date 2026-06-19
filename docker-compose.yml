@@ -1,13 +1,18 @@
 version: '3.8'
-
 services:
-  web:
-    build: .
+  api:
+    build: ./server_py
     ports:
       - "5000:5000"
     environment:
-      - FLASK_APP=server.py
       - FLASK_ENV=production
     volumes:
-      - .:/app
-    command: python server.py
+      - ./server_py:/app
+    command: python app.py
+
+  web:
+    build: ./client
+    ports:
+      - "80:80"
+    environment:
+      - REACT_APP_API_BASE=http://localhost:5000
