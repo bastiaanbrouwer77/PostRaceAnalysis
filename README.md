@@ -41,6 +41,14 @@ Once a race is selected, you can upload media files for that event.
 - `POST /api/events/:id/uploads` - upload a file for a race
 - `GET /api/events/:id/uploads` - list uploads for a race
 
+## Render setup notes
+
+If deploying the frontend and API as separate Render services, set the web service env var:
+
+- `REACT_APP_API_BASE=https://<your-api-service-name>.onrender.com`
+
+The client uses that value at runtime to call the API.
+
 ## Project Structure
 
 - `server_py/` - Flask backend and tests

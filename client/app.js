@@ -5,7 +5,7 @@
 class App {
     constructor() {
         this.container = document.getElementById('app');
-        this.apiBase = window.REACT_APP_API_BASE || '/api';
+        this.apiBase = window.REACT_APP_API_BASE || window.location.origin;
         this.events = [];
         this.selectedEvent = null;
         this.uploads = [];
@@ -20,7 +20,7 @@ class App {
     }
 
     async refreshEvents() {
-        const url = `${this.apiBase}/events`;
+        const url = `${this.apiBase}/api/events`;
         try {
             const response = await fetch(url);
             this.events = await response.json();
@@ -38,7 +38,7 @@ class App {
         }
 
         try {
-            const response = await fetch(`${this.apiBase}/events/${eventId}/uploads`);
+            const response = await fetch(`${this.apiBase}/api/events/${eventId}/uploads`);
             this.uploads = await response.json();
         } catch (error) {
             console.error('Could not load uploads', error);
@@ -58,7 +58,7 @@ class App {
         }
 
         try {
-            const response = await fetch(`${this.apiBase}/events`, {
+            const response = await fetch(`${this.apiBase}/api/events`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, date }),
@@ -70,7 +70,7 @@ class App {
             }
 
             const created = await response.json();
-            this.statusMessage = `Created race "${created.name}."`;
+            this.statusMessage = `Created race "${created.name}".`;
             this.selectedEvent = created;
             await this.refreshEvents();
             await this.fetchUploads(created.id);
@@ -106,7 +106,7 @@ class App {
         formData.append('media_type', mediaType);
 
         try {
-            const response = await fetch(`${this.apiBase}/events/${this.selectedEvent.id}/uploads`, {
+            const response = await fetch(`${this.apiBase}/api/events/${this.selectedEvent.id}/uploads`, {
                 method: 'POST',
                 body: formData,
             });
