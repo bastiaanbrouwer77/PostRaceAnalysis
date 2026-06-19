@@ -16,36 +16,50 @@ def add_cors(resp):
     resp.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
     return resp
 
-def parse_gpx(path):
-    try:
-        tree = ET.parse(path)
-        root = tree.getroot()
-        points = []
-        for trkpt in root.findall('.//{*}trkpt'):
-            lat = trkpt.get('lat')
-            lon = trkpt.get('lon')
-            time_el = trkpt.find('{*}time')
-            t = time_el.text if time_el is not None else None
-            points.append({'lat': float(lat), 'lon': float(lon), 'time': t})
-        return points
-    except Exception as e:
-        return {'error': str(e)}
+@app.route('/events', methods=['GET'])
+def list_events():
+    q = (request.args.get('q') or '').strip().lower()
+    date = (request.args.get('date') or '').strip()
+    filtered = []
+    for event in events.values():
+        if q:
+            if q not in event['title'].lower() and q not in event['description'].lower():
+                continue
+        if date and event.get('start_time'):
+            if not event['start_time'].startswith(date):
+                continue
+        filtered.append(event)
+    filtered.sort(key=lambda item: item.get('start_time') or '')
+    return jsonify({'events': filtered})
+
+@app.route('/events/<eid>', methods=['GET'])
+def get_event(eid):
+    if eid not in events:
+        return jsonify({'error': 'Event not found'}), 404
+    return jsonify(events[eid])
 
 @app.route('/events', methods=['POST'])
 def create_event():
     data = request.get_json() or {}
     eid = str(uuid.uuid4())
-    events[eid] = {'id': eid, 'title': data.get('title','Untitled'), 'description': data.get('description',''), 'start_time': data.get('start_time'), 'media': [], 'boats': {}}
+    events[eid] = {
+        'id': eid,
+        'title': data.get('title', 'Untitled'),
+        'description': data.get('description', ''),
+        'start_time': data.get('start_time'),
+        'media': [],
+        'boats': {}
+    }
     return jsonify(events[eid]), 201
 
 @app.route('/events/<eid>/boats', methods=['POST'])
 def create_boat(eid):
     if eid not in events:
-        return jsonify({'error':'Event not found'}), 404
+        return jsonify({'error': 'Event not found'}), 404
     data = request.get_json() or {}
     name = data.get('name')
     if not name:
-        return jsonify({'error':'Boat name required'}), 400
+        return jsonify({'error': 'Boat name required'}), 400
     bid = str(uuid.uuid4())
     events[eid]['boats'][bid] = {'id': bid, 'name': name, 'tracks': []}
     return jsonify(events[eid]['boats'][bid]), 201
