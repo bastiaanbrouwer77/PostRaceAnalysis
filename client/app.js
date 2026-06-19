@@ -79,7 +79,7 @@ class App {
             this.render();
         } catch (error) {
             console.error('Create event failed', error);
-            this.statusMessage = 'Could not create race. Check the name and date.';
+            this.statusMessage = `Could not create race: ${error.message}`;
             this.render();
         }
     }
@@ -125,7 +125,7 @@ class App {
             this.render();
         } catch (error) {
             console.error('Upload failed', error);
-            this.uploadStatus = 'Upload failed. Try again.';
+            this.uploadStatus = `Upload failed: ${error.message}`;
             this.render();
         }
     }

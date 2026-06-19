@@ -4,6 +4,7 @@ import os
 import sqlite3
 import datetime
 from flask import Flask, jsonify, request, abort, current_app, g
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +22,7 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
 
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     init_app(app)
     register_routes(app)
     app.teardown_appcontext(close_db)
