@@ -9,6 +9,7 @@ class App {
         this.events = [];
         this.selectedEvent = null;
         this.uploads = [];
+        this.boats = [];
         this.statusMessage = '';
         this.uploadStatus = '';
         this.init();
@@ -46,6 +47,59 @@ class App {
         }
     }
 
+    async refreshBoats(eventId) {
+        if (!eventId) {
+            this.boats = [];
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/api/events/${eventId}/boats`);
+            this.boats = await response.json();
+        } catch (error) {
+            console.error('Could not load boats', error);
+            this.boats = [];
+        }
+    }
+
+    async createBoat(event) {
+        event.preventDefault();
+        if (!this.selectedEvent) {
+            this.statusMessage = 'Select a race before creating a boat.';
+            this.render();
+            return;
+        }
+
+        const name = this.container.querySelector('#boat-name').value.trim();
+        if (!name) {
+            this.statusMessage = 'Boat name is required.';
+            this.render();
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/api/events/${this.selectedEvent.id}/boats`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Failed to create boat');
+            }
+
+            const created = await response.json();
+            this.statusMessage = `Created boat "${created.name}".`;
+            await this.refreshBoats(this.selectedEvent.id);
+            this.render();
+        } catch (error) {
+            console.error('Create boat failed', error);
+            this.statusMessage = `Could not create boat: ${error.message}`;
+            this.render();
+        }
+    }
+
     async createEvent(event) {
         event.preventDefault();
         const name = this.container.querySelector('#event-name').value.trim();
@@ -73,6 +127,7 @@ class App {
             this.statusMessage = `Created race "${created.name}".`;
             this.selectedEvent = created;
             await this.refreshEvents();
+            await this.refreshBoats(created.id);
             await this.fetchUploads(created.id);
             this.render();
         } catch (error) {
@@ -104,6 +159,15 @@ class App {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('media_type', mediaType);
+        if (mediaType === 'gpx' || mediaType === 'fit') {
+            const boatSelect = this.container.querySelector('#boat-select');
+            if (!boatSelect || !boatSelect.value) {
+                this.uploadStatus = 'Select a boat for GPS uploads.';
+                this.render();
+                return;
+            }
+            formData.append('boat_id', boatSelect.value);
+        }
 
         try {
             const response = await fetch(`${this.apiBase}/api/events/${this.selectedEvent.id}/uploads`, {
@@ -130,6 +194,7 @@ class App {
 
     async selectEvent(eventId) {
         this.selectedEvent = this.events.find((item) => item.id === eventId) || null;
+        await this.refreshBoats(eventId);
         await this.fetchUploads(eventId);
         this.render();
     }
@@ -146,10 +211,18 @@ class App {
             })
             .join('') || '<option value="">No races found</option>';
 
+        const boatOptions = this.boats
+            .map((boat) => `<option value="${boat.id}">${boat.name}</option>`)
+            .join('') || '<option value="">No boats yet</option>';
+
+        const boatList = this.boats.length
+            ? `<ul>${this.boats.map((boat) => `<li>${boat.name}</li>`).join('')}</ul>`
+            : '<p>No boats created yet.</p>';
+
         const uploadRows = this.uploads
             .map((upload) => `
                 <li>
-                    ${upload.filename} <strong>(${upload.media_type})</strong> — ${new Date(upload.uploaded_at).toLocaleString()}
+                    ${upload.filename} <strong>(${upload.media_type})</strong>${upload.boat_name ? ` — boat: ${upload.boat_name}` : ''} ${upload.uploaded_at ? `— ${new Date(upload.uploaded_at).toLocaleString()}` : ''}
                 </li>
             `)
             .join('') || '<li>No uploaded files yet.</li>';
@@ -181,6 +254,15 @@ class App {
                     <h2>Selected race</h2>
                     ${this.selectedEvent ? `
                         <p><strong>${this.selectedEvent.name}</strong><br>${this.selectedEvent.date}</p>
+                        <div>
+                            <h3>Boats</h3>
+                            ${boatList}
+                            <form id="boat-form">
+                                <label for="boat-name">New boat name</label>
+                                <input id="boat-name" type="text" placeholder="Example: Blue Marlin" />
+                                <button type="submit">Create boat</button>
+                            </form>
+                        </div>
                         <form id="upload-form">
                             <label for="media-type">Upload type</label>
                             <select id="media-type">
@@ -189,6 +271,13 @@ class App {
                                 <option value="gpx">GPS GPX</option>
                                 <option value="fit">GPS FIT</option>
                             </select>
+                            <div id="boat-picker" style="display:none; margin-top: 10px;">
+                                <label for="boat-select">Link GPS to boat</label>
+                                <select id="boat-select">
+                                    <option value="">Select a boat</option>
+                                    ${boatOptions}
+                                </select>
+                            </div>
                             <label for="media-file">Choose file</label>
                             <input id="media-file" type="file" />
                             <button type="submit">Upload to race</button>
@@ -218,6 +307,22 @@ class App {
         const uploadForm = this.container.querySelector('#upload-form');
         if (uploadForm) {
             uploadForm.addEventListener('submit', (evt) => this.uploadFile(evt));
+        }
+
+        const boatForm = this.container.querySelector('#boat-form');
+        if (boatForm) {
+            boatForm.addEventListener('submit', (evt) => this.createBoat(evt));
+        }
+
+        const mediaTypeSelect = this.container.querySelector('#media-type');
+        const boatPicker = this.container.querySelector('#boat-picker');
+        if (mediaTypeSelect && boatPicker) {
+            const updateBoatPicker = () => {
+                const type = mediaTypeSelect.value;
+                boatPicker.style.display = type === 'gpx' || type === 'fit' ? 'block' : 'none';
+            };
+            mediaTypeSelect.addEventListener('change', updateBoatPicker);
+            updateBoatPicker();
         }
     }
 }

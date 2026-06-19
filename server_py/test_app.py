@@ -62,3 +62,50 @@ def test_upload_media(client, tmp_path):
     uploads = response.get_json()
     assert len(uploads) == 1
     assert uploads[0]['filename'] == 'recording.mp4'
+
+
+def test_boat_creation_and_gps_upload(client, tmp_path):
+    response = client.post('/api/events', json={'name': 'Boat Race', 'date': '2025-07-01'})
+    assert response.status_code == 201
+    event = response.get_json()
+    event_id = event['id']
+
+    response = client.post(f'/api/events/{event_id}/boats', json={'name': 'Black Pearl'})
+    assert response.status_code == 201
+    boat = response.get_json()
+    assert boat['name'] == 'Black Pearl'
+    assert boat['event_id'] == event_id
+
+    test_file = tmp_path / 'track.gpx'
+    test_file.write_text('<gpx></gpx>')
+
+    with open(test_file, 'rb') as fp:
+        response = client.post(
+            f'/api/events/{event_id}/uploads',
+            data={
+                'file': (fp, 'track.gpx'),
+                'media_type': 'gpx',
+                'boat_id': str(boat['id']),
+            },
+            content_type='multipart/form-data',
+        )
+
+    assert response.status_code == 201
+    upload_body = response.get_json()
+    assert upload_body['media_type'] == 'gpx'
+    assert upload_body['boat_id'] == boat['id']
+    assert upload_body['filename'] == 'track.gpx'
+
+    response = client.get(f'/api/events/{event_id}/uploads')
+    assert response.status_code == 200
+    uploads = response.get_json()
+    assert len(uploads) == 1
+    assert uploads[0]['filename'] == 'track.gpx'
+    assert uploads[0]['boat_name'] == 'Black Pearl'
+
+    response = client.get(f'/api/events/{event_id}')
+    assert response.status_code == 200
+    event = response.get_json()
+    upload_dir = Path(client.application.config['EVENT_UPLOAD_DIR']) / event['folder_name']
+    assert upload_dir.exists()
+    assert (upload_dir / 'track.gpx').exists()
