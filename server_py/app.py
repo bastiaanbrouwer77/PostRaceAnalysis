@@ -1,110 +1,193 @@
-from flask import Flask, request, jsonify, send_from_directory
-import os, uuid, time
-from xml.etree import ElementTree as ET
+"""PostRaceAnalysis server."""
 
-app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+import os
+import sqlite3
+import datetime
+from flask import Flask, jsonify, request, abort, current_app, g
+from werkzeug.utils import secure_filename
 
-# simple in-memory store
-events = {}
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB_PATH = os.path.join(BASE_DIR, 'data', 'events.db')
+DEFAULT_UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
 
-@app.after_request
-def add_cors(resp):
-    resp.headers['Access-Control-Allow-Origin'] = '*'
-    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
-    resp.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
-    return resp
+UPLOAD_FIELDS = {'video', 'photo', 'gpx', 'fit'}
 
-@app.route('/events', methods=['GET'])
-def list_events():
-    q = (request.args.get('q') or '').strip().lower()
-    date = (request.args.get('date') or '').strip()
-    filtered = []
-    for event in events.values():
-        if q:
-            if q not in event['title'].lower() and q not in event['description'].lower():
-                continue
-        if date and event.get('start_time'):
-            if not event['start_time'].startswith(date):
-                continue
-        filtered.append(event)
-    filtered.sort(key=lambda item: item.get('start_time') or '')
-    return jsonify({'events': filtered})
 
-@app.route('/events/<eid>', methods=['GET'])
-def get_event(eid):
-    if eid not in events:
-        return jsonify({'error': 'Event not found'}), 404
-    return jsonify(events[eid])
+def create_app(test_config=None):
+    app = Flask(__name__)
+    app.config['EVENT_DB_PATH'] = DEFAULT_DB_PATH
+    app.config['EVENT_UPLOAD_DIR'] = DEFAULT_UPLOAD_DIR
 
-@app.route('/events', methods=['POST'])
-def create_event():
-    data = request.get_json() or {}
-    eid = str(uuid.uuid4())
-    events[eid] = {
-        'id': eid,
-        'title': data.get('title', 'Untitled'),
-        'description': data.get('description', ''),
-        'start_time': data.get('start_time'),
-        'media': [],
-        'boats': {}
-    }
-    return jsonify(events[eid]), 201
+    if test_config:
+        app.config.update(test_config)
 
-@app.route('/events/<eid>/boats', methods=['POST'])
-def create_boat(eid):
-    if eid not in events:
-        return jsonify({'error': 'Event not found'}), 404
-    data = request.get_json() or {}
-    name = data.get('name')
-    if not name:
-        return jsonify({'error': 'Boat name required'}), 400
-    bid = str(uuid.uuid4())
-    events[eid]['boats'][bid] = {'id': bid, 'name': name, 'tracks': []}
-    return jsonify(events[eid]['boats'][bid]), 201
+    init_app(app)
+    register_routes(app)
+    app.teardown_appcontext(close_db)
+    return app
 
-@app.route('/events/<eid>/uploads', methods=['POST'])
-def uploads(eid):
-    if eid not in events:
-        return jsonify({'error':'Event not found'}), 404
-    boat_id = request.form.get('boatId')
-    results = []
-    files = request.files.getlist('files')
-    for f in files:
-        filename = str(int(time.time()*1000)) + '_' + f.filename
-        save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        f.save(save_path)
-        info = {'original': f.filename, 'saved': filename}
-        ext = os.path.splitext(f.filename)[1].lower()
-        if ext == '.gpx':
-            pts = parse_gpx(save_path)
-            if isinstance(pts, dict) and pts.get('error'):
-                info['error'] = pts['error']
-            else:
-                info['points'] = pts
-                if boat_id and boat_id in events[eid]['boats']:
-                    events[eid]['boats'][boat_id]['tracks'].append({'id': str(uuid.uuid4()), 'source': filename, 'points': pts})
+
+def init_app(app):
+    db_path = app.config['EVENT_DB_PATH']
+    upload_dir = app.config['EVENT_UPLOAD_DIR']
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                date TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        conn.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS uploads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+            )
+            '''
+        )
+
+
+def get_db():
+    if 'db' not in g:
+        db_path = current_app.config['EVENT_DB_PATH']
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA foreign_keys = ON')
+        g.db = conn
+    return g.db
+
+
+def close_db(exception=None):
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
+
+
+def register_routes(app):
+    @app.route('/api/health')
+    def health():
+        return jsonify({'status': 'ok'})
+
+    @app.route('/api/events', methods=['GET'])
+    def list_events():
+        query = request.args.get('query', '').strip()
+        db = get_db()
+        if query:
+            rows = db.execute(
+                'SELECT id, name, date, created_at FROM events WHERE name LIKE ? ORDER BY date DESC',
+                (f'%{query}%',),
+            ).fetchall()
         else:
-            events[eid]['media'].append({'id': str(uuid.uuid4()), 'original': f.filename, 'saved': filename, 'ext': ext})
-        results.append(info)
-    return jsonify({'uploaded': len(files), 'results': results}), 201
+            rows = db.execute(
+                'SELECT id, name, date, created_at FROM events ORDER BY date DESC'
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
 
-@app.route('/uploads/<path:filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    @app.route('/api/events', methods=['POST'])
+    def create_event():
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            abort(400, 'JSON body is required')
 
-@app.route('/events/<eid>/timeline', methods=['GET'])
-def timeline(eid):
-    if eid not in events:
-        return jsonify({'error':'Event not found'}), 404
-    ev = events[eid]
-    return jsonify({'media': ev['media'], 'boats': list(ev['boats'].values())})
+        name = (data.get('name') or '').strip()
+        date = (data.get('date') or '').strip()
+        if not name or not date:
+            abort(400, 'Both name and date are required')
 
-@app.route('/api/health')
-def health():
-    return jsonify({'status':'ok'})
+        try:
+            datetime.date.fromisoformat(date)
+        except ValueError:
+            abort(400, 'Date must be in YYYY-MM-DD format')
+
+        db = get_db()
+        created_at = datetime.datetime.utcnow().isoformat() + 'Z'
+        cursor = db.execute(
+            'INSERT INTO events (name, date, created_at) VALUES (?, ?, ?)',
+            (name, date, created_at),
+        )
+        db.commit()
+        event_id = cursor.lastrowid
+        row = db.execute(
+            'SELECT id, name, date, created_at FROM events WHERE id = ?',
+            (event_id,),
+        ).fetchone()
+        return jsonify(dict(row)), 201
+
+    @app.route('/api/events/<int:event_id>', methods=['GET'])
+    def get_event(event_id):
+        db = get_db()
+        row = db.execute(
+            'SELECT id, name, date, created_at FROM events WHERE id = ?',
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            abort(404, 'Event not found')
+        return jsonify(dict(row))
+
+    @app.route('/api/events/<int:event_id>/uploads', methods=['GET'])
+    def list_uploads(event_id):
+        db = get_db()
+        rows = db.execute(
+            'SELECT id, event_id, filename, media_type, uploaded_at FROM uploads WHERE event_id = ? ORDER BY uploaded_at DESC',
+            (event_id,),
+        ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.route('/api/events/<int:event_id>/uploads', methods=['POST'])
+    def upload_media(event_id):
+        db = get_db()
+        event = db.execute('SELECT id FROM events WHERE id = ?', (event_id,)).fetchone()
+        if event is None:
+            abort(404, 'Event not found')
+
+        if 'file' not in request.files:
+            abort(400, 'Missing file upload')
+
+        uploaded_file = request.files['file']
+        if uploaded_file.filename == '':
+            abort(400, 'No file selected')
+
+        media_type = (request.form.get('media_type') or 'video').lower().strip()
+        if media_type not in UPLOAD_FIELDS:
+            abort(400, 'Invalid media type')
+
+        filename = secure_filename(uploaded_file.filename)
+        event_folder = os.path.join(current_app.config['EVENT_UPLOAD_DIR'], str(event_id))
+        os.makedirs(event_folder, exist_ok=True)
+        save_path = os.path.join(event_folder, filename)
+        uploaded_file.save(save_path)
+
+        uploaded_at = datetime.datetime.utcnow().isoformat() + 'Z'
+        db.execute(
+            'INSERT INTO uploads (event_id, filename, media_type, uploaded_at) VALUES (?, ?, ?, ?)',
+            (event_id, filename, media_type, uploaded_at),
+        )
+        db.commit()
+
+        return jsonify(
+            {
+                'event_id': event_id,
+                'filename': filename,
+                'media_type': media_type,
+                'uploaded_at': uploaded_at,
+            }
+        ), 201
+
+
+app = create_app()
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_ENV') != 'production')

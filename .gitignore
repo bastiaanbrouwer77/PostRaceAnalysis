@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# SQLite and uploads
+server_py/data/
+server_py/uploads/
+
+# Editor
+.vscode/
+.DS_Store
